@@ -1,5 +1,5 @@
 import type { AnisetteData } from '../anisette-service';
-import type { AppleDeveloperContext } from '../apple-signing';
+import type { AppleDeveloperContext, TwoFactorContext } from '../apple-signing';
 import { shortToken } from '../lib/ids';
 
 type AnisetteService = typeof import('../anisette-service');
@@ -61,7 +61,7 @@ export interface LoginRequest {
   password: string;
   anisetteData: AnisetteData;
   log: (msg: string) => void;
-  onTwoFactorRequired: (submit: (code: string) => void) => void;
+  onTwoFactorRequired: (ctx: TwoFactorContext) => void;
 }
 
 export async function loginAccount(req: LoginRequest): Promise<AppleDeveloperContext> {

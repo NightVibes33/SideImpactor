@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DirectUsbMuxClient } from 'webmuxd';
 import type { AnisetteData } from './anisette-service';
-import type { AppleDeveloperContext } from './apple-signing';
+import type { AppleDeveloperContext, TwoFactorContext } from './apple-signing';
 
 import { Header, type AppPage } from './components/Header';
 import { LoginPage } from './components/LoginPage';
@@ -80,9 +80,13 @@ export function App() {
   const [loginContext, setLoginContext] = useState<AppleDeveloperContext | null>(null);
   const [savedAccounts, setSavedAccounts] = useState<StoredAccountSummary[]>(() => loadStoredAccountList());
   const accountContextMapRef = useRef<Map<string, AppleDeveloperContext>>(new Map());
+  // Version counter so cachedAccountKeys useMemo re-runs when the map changes.
+  // useRef mutations don't trigger re-renders; this state variable does.
+  const [accountCacheVersion, setAccountCacheVersion] = useState(0);
 
   // Login modal
   const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   // Device
   const [pairedDeviceInfo, setPairedDeviceInfo] = useState<PairedDeviceInfo | null>(null);
@@ -114,9 +118,12 @@ export function App() {
   const [trustState, setTrustState] = useState<TrustModalState>(TRUST_MODAL_CLOSED);
   const [twoFactor, setTwoFactor] = useState<{
     open: boolean;
-    submit: ((code: string) => void) | null;
+    ctx: TwoFactorContext | null;
     error: string | null;
-  }>({ open: false, submit: null, error: null });
+  }>({ open: false, ctx: null, error: null });
+  // Set to true by handleTwoFactorCancel so handleLogin's catch can distinguish
+  // a user-cancelled 2FA from a genuine verification failure.
+  const twoFactorCancelledRef = useRef(false);
 
   // Derived
   const isWebUsbSupported = useMemo(() => {
@@ -136,7 +143,7 @@ export function App() {
 
   const activeAccountKey = loginContext ? accountKey(loginContext.appleId, loginContext.team.identifier) : null;
 
-  const cachedAccountKeys = useMemo(() => new Set(accountContextMapRef.current.keys()), [savedAccounts, loginContext]);
+  const cachedAccountKeys = useMemo(() => new Set(accountContextMapRef.current.keys()), [accountCacheVersion]);
   const trustOpen = trustState !== TRUST_MODAL_CLOSED;
 
   // ---- log + progress plumbing ----
@@ -183,6 +190,7 @@ export function App() {
   useEffect(() => {
     const restored = restorePersistedAccountContexts();
     accountContextMapRef.current = restored;
+    setAccountCacheVersion((v) => v + 1);
     const summary = loadStoredAccountSummary();
     if (summary) {
       const active = restored.get(accountKey(summary.appleId, summary.teamId));
@@ -332,13 +340,17 @@ export function App() {
     }
 
     setBusy((prev) => ({ ...prev, loginSign: true }));
+    twoFactorCancelledRef.current = false;
+    setLoginError(null);
     let twoFactorOpened = false;
     let twoFactorErrorShown = false;
     try {
       saveText(APPLE_ID_STORAGE_KEY, trimmedAppleId);
       addLog('login: initializing anisette...');
 
-      const { anisetteData: nextAnisette } = await ensureAnisetteData(anisetteData, addLog);
+      // Always fetch a fresh anisette OTP for login — the OTP is one-time-use
+      // and the cached value is consumed after any previous attempt (even failed).
+      const { anisetteData: nextAnisette } = await ensureAnisetteData(null, addLog);
       setAnisetteData(nextAnisette);
       setAnisetteProvisioned(true);
       addLog('login: anisette ready, authenticating...');
@@ -348,17 +360,19 @@ export function App() {
         password,
         anisetteData: nextAnisette,
         log: addLog,
-        onTwoFactorRequired: (submit) => {
+        onTwoFactorRequired: (ctx) => {
           twoFactorOpened = true;
-          setTwoFactor({ open: true, submit, error: null });
+          setTwoFactor({ open: true, ctx, error: null });
           addLog('login: 2FA required, opening verification dialog');
         },
       });
 
-      setTwoFactor({ open: false, submit: null, error: null });
+      setTwoFactor({ open: false, ctx: null, error: null });
+      setLoginError(null);
       addLog(`login: authenticated as ${context.appleId} / ${context.team.identifier}`);
       const key = accountKey(context.appleId, context.team.identifier);
       accountContextMapRef.current.set(key, context);
+      setAccountCacheVersion((v) => v + 1);
       persistAccountSummary(context);
       persistAccountSession(context, nextAnisette);
       addLog('login: session persisted');
@@ -371,36 +385,43 @@ export function App() {
       addLog('login: done, navigating to sign page');
       navigateToPage('sign');
     } catch (error) {
+      console.error('[login] caught error:', error);
       const msg = formatError(error);
       addLog(`login failed: ${msg}`);
-      if (twoFactorOpened) {
+      // Only show the error inside the 2FA modal if it's still open and the user
+      // did NOT cancel — a cancellation is intentional, not an error.
+      if (twoFactorOpened && !twoFactorCancelledRef.current) {
         setTwoFactor((prev) => ({ ...prev, error: msg }));
         twoFactorErrorShown = true;
+      } else if (!twoFactorOpened) {
+        // Pre-2FA failure (wrong password, rate limit, etc.) — show in login modal.
+        setLoginError(msg);
       }
     } finally {
       if (!twoFactorErrorShown) {
-        setTwoFactor({ open: false, submit: null, error: null });
+        setTwoFactor({ open: false, ctx: null, error: null });
       }
       setBusy((prev) => ({ ...prev, loginSign: false }));
     }
   }, [addLog, anisetteData, appleId, clearPrepared, navigateToPage, password]);
 
-  const handleTwoFactorSubmit = useCallback(
-    (code: string) => {
-      const submit = twoFactor.submit;
-      if (submit) submit(code);
-    },
-    [twoFactor.submit],
-  );
-
   const handleTwoFactorCancel = useCallback(() => {
-    const submit = twoFactor.submit;
-    setTwoFactor({ open: false, submit: null, error: null });
-    if (submit) {
+    const ctx = twoFactor.ctx;
+    twoFactorCancelledRef.current = true;
+    setTwoFactor({ open: false, ctx: null, error: null });
+    if (ctx) {
       addLog('login: 2FA canceled');
-      submit('__CANCELLED__');
+      // Signal cancellation via the device-code path with a sentinel value.
+      ctx.submitDeviceCode('__CANCELLED__');
     }
-  }, [addLog, twoFactor.submit]);
+  }, [addLog, twoFactor.ctx]);
+
+  const handleTwoFactorRetry = useCallback(() => {
+    // Close the modal (clearing the stale ctx + error) then re-run the full
+    // login flow so the user doesn't have to re-type their password.
+    setTwoFactor({ open: false, ctx: null, error: null });
+    void handleLogin();
+  }, [handleLogin]);
 
   // ---- sign flow ----
   const handleSign = useCallback(async () => {
@@ -534,6 +555,7 @@ export function App() {
       // Remove from session map
       removeStoredAccountSession(summary.appleId, summary.teamId);
       accountContextMapRef.current.delete(key);
+      setAccountCacheVersion((v) => v + 1);
 
       // Remove from account list
       const list = loadStoredAccountList().filter(
@@ -598,7 +620,7 @@ export function App() {
     <main className="min-h-screen bg-bg">
       <Header currentPage={currentPage} onNavigate={navigateToPage} />
 
-      <section className="mx-auto max-w-[760px] px-5 py-10 sm:px-7">
+      <section className="mx-auto max-w-190 px-5 py-10 sm:px-7">
         {currentPage === 'login' ? (
           <LoginPage
             loggedIn={!!loginContext}
@@ -642,14 +664,15 @@ export function App() {
 
       <LoginModal
         open={loginModalOpen}
-        onClose={() => setLoginModalOpen(false)}
+        onClose={() => { setLoginModalOpen(false); setLoginError(null); }}
         appleId={appleId}
         password={password}
         busyLoginSign={busy.loginSign}
         canSubmit={loginCanSubmit}
-        onAppleIdChange={setAppleId}
+        error={loginError}
+        onAppleIdChange={(v) => { setAppleId(v); setLoginError(null); }}
         onAppleIdBlur={handleAppleIdBlur}
-        onPasswordChange={setPassword}
+        onPasswordChange={(v) => { setPassword(v); setLoginError(null); }}
         onSubmit={handleLogin}
       />
 
@@ -668,9 +691,10 @@ export function App() {
       />
       <TwoFactorModal
         open={twoFactor.open}
-        onSubmit={handleTwoFactorSubmit}
+        ctx={twoFactor.ctx}
         onCancel={handleTwoFactorCancel}
         serverError={twoFactor.error}
+        onRetry={handleTwoFactorRetry}
       />
     </main>
   );
