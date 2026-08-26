@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AnisetteData } from './anisette-service';
-import type { AppleDeveloperContext } from './apple-signing';
+import type { AppleDeveloperContext, TwoFactorContext } from './apple-signing';
 import type { PairedDeviceInfo } from './flows/pair';
 
 // ---- mock every flow module ----
@@ -27,7 +27,7 @@ const loginAccountMock =
     (req: {
       appleId: string;
       password: string;
-      onTwoFactorRequired: (submit: (code: string) => void) => void;
+      onTwoFactorRequired: (ctx: TwoFactorContext) => void;
       log: (msg: string) => void;
     }) => Promise<AppleDeveloperContext>
   >();
@@ -171,8 +171,13 @@ describe('App — login modal', () => {
   it('shows 2FA modal when login flow requests a code', async () => {
     let resolveLogin: (ctx: AppleDeveloperContext) => void = () => {};
     loginAccountMock.mockImplementationOnce(async (req) => {
-      req.onTwoFactorRequired((code) => {
-        if (code === '123456') resolveLogin(fakeContext);
+      req.onTwoFactorRequired({
+        submitDeviceCode: (code) => {
+          if (code === '123456') resolveLogin(fakeContext);
+        },
+        trustedPhoneNumbers: [],
+        requestSms: async () => {},
+        submitSmsCode: async () => {},
       });
       return await new Promise<AppleDeveloperContext>((resolve) => {
         resolveLogin = resolve;
