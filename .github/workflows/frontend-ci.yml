@@ -54,6 +54,12 @@ jobs:
         working-directory: frontend
         run: bun run build
 
+      - name: Verify zsign browser runtime assets
+        run: |
+          test -s frontend/dist/assets/zsign-wasm.min.js
+          test -s frontend/dist/assets/zsign-wasm.wasm
+          grep -R -F '/assets/zsign-wasm.min.js' frontend/dist/assets/*.js >/dev/null
+
       - name: Upload browser signer
         uses: actions/upload-artifact@v4
         with:
