@@ -53,3 +53,12 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: bun run build
+
+      - name: Upload browser signer
+        uses: actions/upload-artifact@v4
+        with:
+          name: sideimpactor-browser-signer
+          path: frontend/dist
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
