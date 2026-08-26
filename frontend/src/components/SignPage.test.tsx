@@ -31,7 +31,7 @@ function defaultProps(overrides: Partial<Props> = {}): Props {
 }
 
 describe('SignPage', () => {
-  it('renders heading, account selector, drop zone and action buttons', () => {
+  it('renders local signing, account signing, device controls and action buttons', () => {
     render(
       <SignPage
         {...defaultProps({
@@ -40,7 +40,12 @@ describe('SignPage', () => {
       />,
     );
     expect(screen.getByRole('heading', { name: /Sign & Install/ })).toBeInTheDocument();
-    expect(screen.getByLabelText('Signing Account')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Local certificate signing' })).toBeInTheDocument();
+    expect(screen.getByLabelText('P12 certificate')).toBeInTheDocument();
+    expect(screen.getByLabelText('Provisioning profile')).toBeInTheDocument();
+    expect(screen.getByLabelText('P12 password')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign & Download Locally' })).toBeDisabled();
+    expect(screen.getByLabelText('Apple Signing Account')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Connect Device' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign IPA' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Install Signed IPA' })).toBeInTheDocument();
