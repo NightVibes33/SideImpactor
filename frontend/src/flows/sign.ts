@@ -75,7 +75,7 @@ export async function signIpaLocalFlow(req: LocalSignIpaRequest): Promise<LocalS
   ]);
 
   log('local sign: resigning ipa in browser...');
-  const signedData = await resigner.signIpa(ipaData, {
+  const signedResult = await resigner.signIpa(ipaData, {
     pkey: p12Data,
     prov: provisioningProfile,
     password: req.p12Password ?? '',
@@ -87,6 +87,7 @@ export async function signIpaLocalFlow(req: LocalSignIpaRequest): Promise<LocalS
     zipLevel: 9,
   });
 
+  const signedData = signedResult.data;
   const owned = new Uint8Array(signedData.byteLength);
   owned.set(signedData);
   const signedFile = new File([owned.buffer], toSignedFileName(req.ipaFile.name), {
