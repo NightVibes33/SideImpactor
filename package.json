@@ -20,7 +20,7 @@
     "build:wasm:libcurl": "bash scripts/build-wasm-libcurl.sh",
     "build:wasm:zsign": "bash scripts/build-wasm-zsign.sh",
     "setup": "git submodule update --init && bun install --ignore-scripts && bun run build:wasm:dist",
-    "build:wasm:dist": "bun wasm/openssl/build.mjs && ln -sfn pkg wasm/openssl/binary && bun wasm/libcurl-wasm/build.mjs && mkdir -p wasm/zsign-wasm/js/dist && cp wasm/zsign-wasm/js/npm/* wasm/zsign-wasm/js/dist/",
+    "build:wasm:dist": "bun wasm/openssl/build.mjs && ln -sfn pkg wasm/openssl/binary && bun wasm/libcurl-wasm/build.mjs && (cd wasm/zsign-wasm && bun run build:dist) && mkdir -p wasm/zsign-wasm/js/dist && cp wasm/zsign-wasm/js/npm/* wasm/zsign-wasm/js/dist/",
     "dev": "bun run setup && mkdir -p frontend/dist && cd backend && bun x wrangler dev --port 8787 & cd frontend && bun run dev",
     "dev:frontend": "bun run setup && cd frontend && bun run dev",
     "dev:backend": "bun run setup && mkdir -p frontend/dist && cd backend && bun x wrangler dev --port 8787",
